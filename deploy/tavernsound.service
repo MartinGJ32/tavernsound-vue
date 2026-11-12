@@ -1,0 +1,39 @@
+# Unidad de systemd para correr TavernSound como servicio persistente.
+#
+# Instalación (como root o con sudo):
+#   sudo cp deploy/tavernsound.service /etc/systemd/system/tavernsound.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tavernsound
+#
+# Ver logs en vivo:
+#   sudo journalctl -u tavernsound -f
+#
+# Reiniciar después de un deploy:
+#   sudo systemctl restart tavernsound
+
+[Unit]
+Description=TavernSound (Express + Socket.io)
+After=network.target
+
+[Service]
+Type=simple
+# Ajustá User/WorkingDirectory si tu usuario o la ruta del repo son otros.
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tavernsound-vue
+# EnvironmentFile carga UPSTASH_REDIS_REST_URL, PORT, etc. desde un .env
+# real en el servidor — nunca se commitea, se crea a mano en la VM
+# (ver DEPLOY.md).
+EnvironmentFile=/home/ubuntu/tavernsound-vue/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run start:server
+Restart=on-failure
+RestartSec=5
+
+# Lectura/escritura mínima necesaria: systemd no deja escribir fuera de
+# WorkingDirectory ni tocar el resto del sistema de archivos.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/tavernsound-vue
+
+[Install]
+WantedBy=multi-user.target

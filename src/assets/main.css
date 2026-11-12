@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/*
+ * Tokens de diseño de TavernSound.
+ *
+ * Estos valores son un traslado directo de las variables CSS de la app
+ * original (index.html legado). La identidad visual — taberna/fantasía,
+ * dorado sobre fondo oscuro — ya está definida y probada; el objetivo de
+ * esta migración es reimplementarla con componentes, no reinventarla.
+ *
+ * Nota sobre bordes: la app original definía --border/--border2 como
+ * rgba(gold, alpha). Con Tailwind v4 no hace falta duplicar el color con
+ * alpha "horneado": alcanza con los modificadores de opacidad de Tailwind,
+ * p. ej. `border-gold-dim/30`.
+ */
+@theme {
+  --color-bg: #0d0a07;
+  --color-parchment: #1a1208;
+  --color-surface: #211808;
+  --color-surface-2: #2d2010;
+  --color-surface-3: #3d2c14;
+
+  --color-gold: #c9973a;
+  --color-gold-2: #e8b84b;
+  --color-gold-dim: #7a5820;
+
+  --color-ember: #c0401a;
+  --color-ember-2: #e05525;
+
+  --color-text: #f0e4c8;
+  --color-text-2: #b8a07a;
+  --color-text-3: #6b5035;
+
+  --color-chat-bg: #130f05;
+
+  --font-display: "Cinzel Decorative", serif;
+  --font-heading: "Cinzel", serif;
+  --font-body: "Crimson Text", Georgia, serif;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  /* Textura de ruido sutil + viñeta cálida, igual que en la app original */
+  background-image:
+    radial-gradient(ellipse 80% 60% at 70% 20%, rgba(100, 50, 10, 0.18) 0%, transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* Scrollbar temática, igual que en la app original */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-gold-dim);
+  border-radius: 2px;
+}

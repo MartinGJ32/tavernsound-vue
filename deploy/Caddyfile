@@ -1,0 +1,36 @@
+# Config de Caddy para TavernSound.
+#
+# Por qué Caddy y no nginx: con un dominio apuntando a la VM, Caddy
+# consigue y renueva el certificado de Let's Encrypt solo, sin certbot ni
+# cron jobs — y su `reverse_proxy` detecta y reenvía conexiones WebSocket
+# automáticamente, así que Socket.io funciona sin configuración extra
+# (con nginx hace falta agregar a mano los headers Upgrade/Connection).
+#
+# Instalación en Ubuntu:
+#   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+#   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+#   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+#   sudo apt update && sudo apt install -y caddy
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   # Reemplazá tu-dominio.com más abajo antes de esto:
+#   sudo systemctl reload caddy
+
+tu-dominio.com {
+	reverse_proxy localhost:3000
+}
+
+# ── Si todavía no tenés un dominio ──
+# Let's Encrypt (y por lo tanto el HTTPS automático de Caddy) necesita un
+# nombre de dominio real — no emite certificados para una IP pelada. Sin
+# dominio, dos opciones:
+#
+# 1. Conseguir uno gratis (un subdominio de DuckDNS o similar alcanza) y
+#    apuntarlo a la IP pública de la VM, usar el bloque de arriba.
+#
+# 2. Mientras tanto, HTTP plano sin cifrar — sirve para probar, no para
+#    producción de verdad. Comentá el bloque de arriba y descomentá este:
+#
+# :80 {
+# 	reverse_proxy localhost:3000
+# }
