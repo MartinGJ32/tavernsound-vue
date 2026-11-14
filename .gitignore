@@ -4,15 +4,20 @@ node_modules/
 # Build
 dist/
 dist-ssr/
-*.local
+coverage/
 *.tsbuildinfo
+
+# Archivos locales
+*.local
+*.log
+
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
 
 # Vercel
 .vercel/
-
-# Entorno
-.env
-.env.*.local
 
 # Editor / OS
 .DS_Store
