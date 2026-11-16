@@ -89,43 +89,68 @@ export function usePlayer() {
   async function attach(
     target: HTMLElement,
     onStateChange: (state: YT.PlayerState) => void,
+    videoId: string,
   ): Promise<void> {
     try {
       await loadYouTubeIframeApi();
-    } catch {
+    } catch (error) {
       readyState.value = "error";
-      return;
+      throw error;
     }
 
     if (!window.YT) {
       readyState.value = "error";
-      return;
+      throw new Error("YouTube IFrame API no disponible");
     }
 
-    player.value = new window.YT.Player(target, {
-      height: "100%",
-      width: "100%",
-      videoId: "",
-      playerVars: { autoplay: 0, controls: 0, rel: 0, modestbranding: 1, playsinline: 1 },
-      events: {
-        onReady: (event) => {
-  player.value = event.target;
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      readyState.value = "error";
+      throw new Error('ID de YouTube inválido: ${ videoId }');
+    }
 
-  readyState.value = "ready";
+    readyState.value = "loading";
 
-  // Aplicamos el volumen cuando YouTube está listo.
-  event.target.setVolume(pendingVolume);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
 
-  startPolling();
-},
-        onStateChange: (event) => {
-          playerState.value = event.data;
-          onStateChange(event.data);
+      player.value = new window.YT!.Player(target, {
+        height: "100%",
+        width: "100%",
+        videoId,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          rel: 0,
+          playsinline: 1,
+          origin: window.location.origin,
         },
-        onError: () => {
-          readyState.value = "error";
+        events: {
+          onReady: (event) => {
+            player.value = event.target;
+            readyState.value = "ready";
+            event.target.setVolume(pendingVolume);
+            startPolling();
+
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          },
+          onStateChange: (event) => {
+            playerState.value = event.data;
+            onStateChange(event.data);
+          },
+          onError: (event) => {
+            console.error("Error de YouTube IFrame API:", event.data);
+            readyState.value = "error";
+
+            if (!settled) {
+              settled = true;
+              reject(new Error('YouTube devolvió el error ${ event.data }'));
+            }
+          },
         },
-      },
+      });
     });
   }
 
@@ -149,22 +174,22 @@ export function usePlayer() {
     player.value?.setPlaybackRate(rate);
   }
 
-function setVolume(volume: number): void {
-  // Guardamos siempre el último volumen solicitado.
-  pendingVolume = Math.max(0, Math.min(100, Math.round(volume)));
+  function setVolume(volume: number): void {
+    // Guardamos siempre el último volumen solicitado.
+    pendingVolume = Math.max(0, Math.min(100, Math.round(volume)));
 
-  // Todavía no podemos operar sobre el reproductor.
-  if (readyState.value !== "ready") return;
+    // Todavía no podemos operar sobre el reproductor.
+    if (readyState.value !== "ready") return;
 
-  const currentPlayer = player.value;
+    const currentPlayer = player.value;
 
-  if (!currentPlayer || typeof currentPlayer.setVolume !== "function") {
-    console.error("YouTube Player no tiene disponible setVolume:", currentPlayer);
-    return;
+    if (!currentPlayer || typeof currentPlayer.setVolume !== "function") {
+      console.error("YouTube Player no tiene disponible setVolume:", currentPlayer);
+      return;
+    }
+
+    currentPlayer.setVolume(pendingVolume);
   }
-
-  currentPlayer.setVolume(pendingVolume);
-}
 
   function setMuted(muted: boolean): void {
     if (muted) player.value?.mute();

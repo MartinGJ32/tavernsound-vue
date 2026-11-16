@@ -91,13 +91,58 @@ function loadCurrentTrackIntoPlayer(): void {
   }
 }
 
-onMounted(async () => {
-  if (!playerContainer.value) return;
-  await yt.attach(playerContainer.value, handlePlayerStateChange);
-  yt.setVolume(volume.value);
-  loadCurrentTrackIntoPlayer();
-  sync.start();
+let attachPromise: Promise<void> | null = null;
+let syncStarted = false;
+
+async function initializePlayer(videoId: string): Promise<void> {
+  if (!playerContainer.value || attachPromise) return;
+
+  attachPromise = yt.attach(
+    playerContainer.value,
+    handlePlayerStateChange,
+    videoId,
+  );
+
+  try {
+    await attachPromise;
+
+    yt.setVolume(volume.value);
+    loadCurrentTrackIntoPlayer();
+
+    if (!syncStarted) {
+      sync.start();
+      syncStarted = true;
+    }
+  } catch (error) {
+    console.error("No se pudo inicializar YouTube:", error);
+    attachPromise = null;
+    toast.error("No se pudo inicializar el reproductor de YouTube.");
+  }
+}
+
+onMounted(() => {
+  const videoId = currentTrack.value?.id;
+
+  if (videoId) {
+    void initializePlayer(videoId);
+  }
 });
+
+watch(
+  () => currentTrack.value?.id,
+  (videoId) => {
+    if (!videoId) return;
+
+    if (!attachPromise) {
+      void initializePlayer(videoId);
+      return;
+    }
+
+    if (yt.readyState.value === "ready") {
+      loadCurrentTrackIntoPlayer();
+    }
+  },
+);
 
 watch(
   () => room.room?.currentTrack?.id,
