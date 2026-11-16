@@ -1,267 +1,443 @@
 # TavernSound
 
-Escuchá música de YouTube sincronizada con amigos, en salas independientes.
+TavernSound es una aplicación web colaborativa para escuchar música de YouTube sincronizada con amigos, en salas independientes. Cada sala tiene su propia reproducción, cola de canciones y chat en tiempo real, para que varias personas puedan compartir música sin interferir con otras salas.
 
-## Estado de la migración
+El proyecto utiliza Vue 3 y TypeScript en el frontend, y un backend propio con Node.js, Express y Socket.IO.
 
-Este proyecto se está migrando de una app monolítica (HTML/CSS/JS vanilla +
-Express/Socket.io de sala única, preservada en [`legacy/`](./legacy)) a
-Vue 3 + TypeScript + Tailwind, con salas independientes.
+## Estado del proyecto
 
-> **Historial de la decisión de infraestructura, por transparencia:** la
-> Fase 1 eligió "Ably + Vercel KV" asumiendo despliegue en Vercel. Se
-> corrigió en dos pasos:
-> 1. Vercel KV está descontinuado → se pasó a Redis vía Upstash (mismo
->    motor, se accede distinto).
-> 2. El destino final de despliegue es una **VM persistente y gratuita en
->    Oracle Cloud (OCI Always Free)**, no Vercel. Eso saca de en medio la
->    única razón por la que hacía falta Ably (Vercel no sostiene procesos
->    ni WebSockets persistentes) — con una VM que corre sin parar, un
->    servidor Socket.io propio hace lo mismo gratis y con una dependencia
->    externa menos. Se reemplazó Ably por Socket.io en consecuencia.
->
-> Redis se mantiene — nunca fue una limitación específica de Vercel, sino
-> una forma de que el estado de las salas sobreviva a un reinicio del
-> proceso, algo que sigue siendo válido en una VM.
+La aplicación original estaba desarrollada con HTML, CSS, JavaScript vanilla, Express y Socket.IO. Esa versión se conserva en [`legacy/`](./legacy) y se utilizó como referencia durante la migración.
 
-**Fase actual: 9 y 10 — despliegue en OCI y revisión de seguridad final.**
+La versión actual está desarrollada con Vue 3, TypeScript y Tailwind CSS 4. La migración principal está terminada y la aplicación funciona localmente.
 
-- **Comparar local vs. nube:** [`LOCAL-VS-NUBE.md`](./LOCAL-VS-NUBE.md) explica
-  cómo iniciarlo en local, cómo ver los parámetros efectivos de cada entorno
-  (`npm run diagnose`, `/api/health`) y cómo compararlos con un `diff`.
-- **Despliegue (Fase 9):** [`DEPLOY.md`](./DEPLOY.md) es una guía paso a paso
-  para una VM Always Free de OCI: systemd para mantener el proceso vivo,
-  Caddy como reverse proxy con HTTPS automático, y el detalle que más
-  tropieza en OCI — hay *dos* firewalls (el Security List de la VCN y el de
-  la VM), y en Ubuntu hay que insertar la regla antes del `REJECT` o no
-  surte efecto. Los archivos están en [`deploy/`](./deploy).
-- **Revisión de seguridad (Fase 10):** repasé el proyecto contra el
-  checklist del brief original y encontré —y corregí— una falla grave en
-  mi propio diseño. Ver la sección [Seguridad](#seguridad) más abajo.
+### Arquitectura e infraestructura actual
 
-Antes de esto: la Fase 8 hizo que un refresh de página retome tu sesión
-(mismo rol, incluido el de host) en vez de "unirte de cero", y que el
-servidor espere un margen de gracia antes de reasignar el host, para que
-ese refresh no se lo haga perder.
+Durante el desarrollo se evaluaron distintas alternativas de infraestructura. Inicialmente se consideró utilizar Ably y Vercel KV, pero finalmente se optó por un backend propio con Socket.IO y Redis mediante Upstash.
 
-Fases planeadas (ver el análisis completo para el detalle de cada una):
+También se planificó un despliegue en Oracle Cloud Infrastructure (OCI), pero no se pudo completar el alta en ese proveedor. Como alternativa, se configuró una computadora doméstica con Fedora Linux como servidor y Cloudflare Tunnel para permitir el acceso desde Internet sin configurar redirección de puertos en el router.
 
-1. ✅ Scaffolding Vue + TS + Vite + Tailwind
-2. ✅ Tipos y contrato de eventos realtime
-3. ✅ Sistema de salas (crear/unirse por código)
-4. ✅ Migración de UI a componentes (reproductor, cola, chat)
-5. ✅ Reproductor real (YouTube IFrame API) y corrección de deriva
-6. ✅ Realtime con Socket.io: chat en vivo + estado de reproducción sincronizado entre todos
-7. ✅ Reasignación de host cuando el host actual se desconecta
-8. ✅ Sesiones persistentes (sobrevivir a un refresh) + margen de gracia para la reasignación de host
-9. ✅ Despliegue en OCI (systemd, Caddy con HTTPS, firewall de dos capas) — documentado, **no probado contra una VM real**
-10. ✅ Revisión de seguridad final (autenticación por token, límites de frecuencia, headers)
+La arquitectura que se encuentra funcionando es:
 
-## Stack
+```text
+                 Internet
+                    |
+              Cloudflare HTTPS
+                    |
+             Cloudflare Tunnel
+                    |
+                cloudflared
+                    |
+              Fedora Linux
+                    |
+           TavernSound (Node.js)
+                    |
+               Upstash Redis
+```
 
-- **Frontend:** Vue 3 (Composition API), TypeScript, Vite, Tailwind CSS 4, Vue Router, Pinia.
-- **Backend:** un solo proceso Node persistente (`server/`) — Express para la API REST, Socket.io para realtime, pensado para correr en una VM (OCI Always Free).
-- **Persistencia:** Redis (Upstash, por REST) para el estado de las salas; cae a memoria si no hay credenciales.
-- **Tests:** Vitest, sobre la lógica pura (sin infraestructura real) — ver más abajo.
+Actualmente:
+
+- **Sistema servidor:** Fedora Linux.
+- **Backend:** Node.js, Express y Socket.IO.
+- **Puerto interno:** 3000 por defecto.
+- **Persistencia:** Redis mediante Upstash REST.
+- **Acceso externo:** Cloudflare Quick Tunnel.
+- **Administración de procesos:** systemd.
+
+Se comprobó el acceso público desde un dispositivo conectado mediante una red móvil, fuera de la red local.
+
+Cloudflare Quick Tunnel genera una URL temporal aleatoria bajo `trycloudflare.com`. La URL puede cambiar cuando se reinicia el túnel. No se configuró un dominio propio ni un Named Tunnel.
+
+**Esta infraestructura no es una VPS:** el servidor continúa ejecutándose en una computadora física doméstica. Cloudflare Tunnel permite acceder al servicio desde Internet, pero no reemplaza el alojamiento en un proveedor externo.
+
+### Próxima etapa: virtualización
+
+Como siguiente paso se evaluó crear una máquina virtual con Ubuntu Server 24.04 dentro de Fedora mediante KVM, QEMU y virt-manager. El objetivo es practicar la administración de un servidor Linux independiente, incluyendo SSH, firewall, systemd y Caddy.
+
+Esta etapa todavía está pendiente de completar y verificar. Una máquina virtual local no equivale a una VPS comercial, ya que continúa dependiendo del hardware y de la conexión de la computadora anfitriona.
+
+## Stack tecnológico
+
+- **Frontend:** Vue 3 (Composition API), TypeScript, Vite, Tailwind CSS 4, Vue Router y Pinia.
+- **Backend:** Node.js en un único proceso persistente dentro de `server/`. Express se utiliza para la API REST y Socket.IO para la comunicación en tiempo real.
+- **Persistencia:** Redis mediante Upstash REST para almacenar el estado de las salas. Si no hay credenciales configuradas, el sistema utiliza almacenamiento en memoria.
+- **Reproducción:** YouTube IFrame API.
+- **Testing:** Vitest para probar la lógica de negocio y los módulos que no necesitan infraestructura externa.
+- **Servidor:** Fedora Linux y systemd.
+- **Acceso externo:** Cloudflare Tunnel.
 
 ## Desarrollo local
 
-Primera vez (instala el frontend, el server, la app legacy, y crea tu `.env` local):
+Para facilitar la instalación inicial preparé un script que instala las dependencias del frontend, del servidor y de la aplicación original, además de generar el archivo `.env` local.
 
 ```bash
 npm run setup
 ```
 
-Después, **hacen falta dos procesos en paralelo**:
+Una vez instalado todo, necesito ejecutar dos procesos en paralelo.
+
+Terminal 1:
 
 ```bash
-npm run dev:server   # Express + Socket.io en http://localhost:3000
-npm run dev          # frontend en http://localhost:5173 (proxea /api y /socket.io hacia el de arriba)
+npm run dev:server
 ```
 
-Abrí **http://localhost:5173** en el navegador — ese es el que tiene el frontend.
+Terminal 2:
 
 ```bash
-npm run build          # type-check (app + node + server) + build de producción a dist/
-npm run preview        # sirve el build de producción localmente (solo frontend, sin API)
-npm run type-check     # solo type-check, sin build
-npm run start:server   # corre el server compilado-al-vuelo, sin --watch (para producción)
-npm test               # corre los tests con Vitest
-npm run diagnose       # parámetros efectivos de esta máquina (ver LOCAL-VS-NUBE.md)
-npm run dev:legacy     # app original en http://localhost:3000 — ¡no la corras junto con dev:server! comparten puerto por default
+npm run dev
 ```
 
-En producción (`NODE_ENV=production`), un solo proceso (`npm run
-start:server`) sirve todo: la API, Socket.io, y el frontend ya compilado
-desde `dist/` — hace falta correr `npm run build` antes. Esto es
-justamente lo que simplifica el despliegue en OCI: una sola VM, un solo
-proceso, un solo puerto.
+El backend se ejecuta por defecto en `http://localhost:3000` y el frontend en `http://localhost:5173`.
 
-### Verificación manual del realtime
+Vite redirige las peticiones de `/api` y `/socket.io` hacia el servidor.
 
-Además de los tests automáticos, hay un script que levanta clientes de
-Socket.io de verdad contra el server corriendo y chequea, de punta a punta:
-la autenticación por token (incluyendo el exploit del `hostId` público como
-regresión: tiene que dar 403), unirse, contador de oyentes, chat en vivo y
-su límite de frecuencia (un flood de 12 mensajes tiene que cortarse),
-sincronización en vivo, que un refresh del host **no** dispare una
-reasignación, que una desconexión real sí la dispare pasado el margen, y
-que el ex-host ya no pueda editar la cola:
+Para acceder a la aplicación abro:
+
+**http://localhost:5173**
+
+### Otros comandos disponibles
 
 ```bash
-npm run dev:server &          # dejalo corriendo en otra terminal si preferís
+npm run build          # Type-check y compilación de producción en dist/
+npm run preview        # Vista previa del build de producción (solo frontend)
+npm run type-check     # Verificación de tipos sin generar el build
+npm run start:server   # Ejecuta el servidor sin modo watch
+npm test               # Ejecuta los tests con Vitest
+npm run diagnose       # Muestra los parámetros efectivos del entorno
+npm run dev:legacy     # Ejecuta la aplicación original
+```
+
+El comando `npm run dev:legacy` no debe ejecutarse al mismo tiempo que `npm run dev:server` si ambos utilizan el puerto 3000.
+
+### Funcionamiento en producción
+
+En producción (`NODE_ENV=production`) el proyecto funciona con un único proceso Node.js:
+
+```bash
+npm run build
+NODE_ENV=production npm run start:server
+```
+
+Primero compilo el frontend y después inicio el servidor. Express se encarga de servir la API, Socket.IO y los archivos estáticos generados en `dist/`.
+
+Esta arquitectura permite ejecutar el frontend y el backend desde el mismo proceso, utilizando un único puerto interno.
+
+## Despliegue actual en Fedora
+
+En la computadora que funciona como servidor, TavernSound se ejecuta como un servicio de systemd. Esto permite iniciar, detener, reiniciar y consultar el estado del backend sin depender de una terminal abierta.
+
+Cloudflare Tunnel también se administra mediante un servicio de systemd. Está configurado para conectarse al backend local en el puerto correspondiente.
+
+Comandos de administración:
+
+```bash
+sudo systemctl start tavernsound
+sudo systemctl stop tavernsound
+sudo systemctl restart tavernsound
+systemctl status tavernsound
+```
+
+Para Cloudflare Tunnel:
+
+```bash
+sudo systemctl start cloudflared
+sudo systemctl stop cloudflared
+sudo systemctl restart cloudflared
+systemctl status cloudflared
+```
+
+Para consultar los registros:
+
+```bash
+sudo journalctl -u tavernsound -n 50 --no-pager
+sudo journalctl -u cloudflared -n 50 --no-pager
+```
+
+Los servicios están configurados para recuperarse ante determinados fallos y para iniciar con el sistema.
+
+### Acceso público mediante Cloudflare Tunnel
+
+Cloudflare Tunnel permite publicar el servicio sin configurar redirección de puertos entrantes en el router. El programa `cloudflared` establece una conexión saliente hacia Cloudflare y permite que las solicitudes recibidas por la URL pública lleguen al backend local.
+
+Se utiliza la modalidad Quick Tunnel. Su principal limitación es que genera una URL aleatoria que puede cambiar al reiniciar el túnel. No se incluye la URL pública actual en este README porque puede dejar de ser válida y no es necesaria para documentar la arquitectura.
+
+### Automatización de los servicios
+
+También se preparó un script local para iniciar y detener TavernSound y Cloudflare Tunnel desde un acceso directo del escritorio.
+
+El script alterna entre estos estados:
+
+- Si los servicios están activos, los detiene.
+- Si están detenidos, inicia primero TavernSound y después Cloudflare Tunnel.
+- Intenta obtener la URL pública del túnel desde los registros del servicio y mostrarla en la terminal.
+
+La visualización de la URL después de cada inicio todavía requiere pruebas adicionales para confirmar que funciona de manera consistente.
+
+## Persistencia de salas
+
+Inicialmente TavernSound utilizaba almacenamiento en memoria. Esto permitía conservar el estado de las salas mientras el backend permanecía activo, pero los datos se perdían al reiniciar el proceso.
+
+Para resolverlo se configuró Redis mediante Upstash REST.
+
+Las variables necesarias se documentan en [`.env.example`](./.env.example). Sus valores son credenciales privadas y no deben incluirse en el repositorio:
+
+```env
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+```
+
+La aplicación carga las variables desde `.env` mediante su propio mecanismo de dotenv. Cuando las credenciales están configuradas, el servidor utiliza Upstash. Si no están disponibles, utiliza el almacenamiento en memoria.
+
+Para comprobar el estado del backend se puede consultar el endpoint local `/api/health`. La respuesta informa si el servidor está funcionando y qué mecanismo de almacenamiento está utilizando, sin necesidad de publicar datos de conexión.
+
+## Sincronización y reproductor de YouTube
+
+TavernSound utiliza Socket.IO para comunicar los cambios de reproducción entre los participantes de una sala.
+
+El sistema permite sincronizar:
+
+- Inicio y pausa.
+- Reanudación.
+- Posición de reproducción.
+- Avance de canciones.
+- Cambios en la cola.
+
+Durante las pruebas iniciales encontré un problema en la inicialización de YouTube IFrame API. El reproductor se creaba sin un ID real de video y la aplicación no esperaba a que YouTube confirmara que estaba listo.
+
+Lo solucioné modificando `src/composables/usePlayer.ts` para recibir el ID real del video y esperar el evento `onReady`. También ajusté `src/components/MusicPlayer.vue` para inicializar el reproductor cuando existe una canción disponible.
+
+La solución fue probada y funcionó correctamente.
+
+También realicé pruebas manuales con dos pestañas del navegador abiertas simultáneamente. Ambas pudieron reproducir, pausar, reanudar y cambiar la posición de la canción de manera sincronizada.
+
+Estas pruebas se realizaron en la misma computadora. Todavía falta validar la sincronización entre equipos ubicados en redes diferentes.
+
+## Verificación manual de Socket.IO
+
+Además de los tests automatizados, desarrollé un script para verificar el funcionamiento de Socket.IO contra un servidor en ejecución.
+
+El script se encuentra en:
+
+```text
+scripts/manual-socket-test.mjs
+```
+
+Permite comprobar:
+
+- La autenticación mediante credenciales de sesión.
+- La creación y el ingreso a salas.
+- El contador de participantes conectados.
+- El funcionamiento del chat en tiempo real.
+- Los límites de frecuencia de mensajes.
+- La sincronización de la reproducción.
+- Que actualizar la página como host no provoque una reasignación inmediata.
+- Que una desconexión real provoque la reasignación después del margen de gracia.
+- Que el antiguo host pierda la posibilidad de modificar la cola.
+
+Para ejecutarlo, primero inicio el servidor:
+
+```bash
+npm run dev:server
+```
+
+En otra terminal:
+
+```bash
 node scripts/manual-socket-test.mjs
+```
 
-# Con un margen de gracia corto, para no esperar los 5s por default:
-HOST_REASSIGNMENT_GRACE_MS=1000 npm run dev:server &
+También puedo reducir el margen de gracia para no tener que esperar los 5 segundos predeterminados:
+
+```bash
+HOST_REASSIGNMENT_GRACE_MS=1000 npm run dev:server
 HOST_REASSIGNMENT_GRACE_MS=1000 node scripts/manual-socket-test.mjs
 ```
 
-No es parte de la suite de Vitest a propósito — es una verificación de
-extremo a extremo contra el proceso real, no una prueba unitaria.
+Esta verificación está separada de Vitest porque levanta clientes reales de Socket.IO y comprueba el comportamiento contra el proceso del servidor.
 
 ## Tests
+
+Para ejecutar la suite utilizo:
 
 ```bash
 npm test
 ```
 
-84 tests: el parseo validado de `RoomEvent`, la extracción de ID de
-YouTube, la generación de código de sala, el servicio de salas completo
-(crear, unirse, y las siete mutaciones con su autorización "solo el
-host"), el algoritmo de corrección de deriva, cómo el store aplica cada
-evento realtime, la persistencia de sesión, y — de la Fase 10 — el módulo
-de autenticación por token, el limitador de frecuencia, y **tests de
-regresión del exploit del `hostId` público** (usar el `hostId` visible en
-el estado de la sala como credencial tiene que fallar). Todo corre contra
-lógica en memoria: nada necesita Redis ni una conexión real.
+Actualmente tengo **91 tests automatizados aprobados**, distribuidos en 10 archivos de prueba.
 
-Lo que los tests unitarios no pueden cubrir —Socket.io real, headers HTTP,
-límites de frecuencia, el margen de gracia— lo cubre el script de
-verificación manual de arriba, que también incluye el exploit como
-regresión contra el servidor corriendo.
+Cubren diferentes partes de la aplicación:
 
-## Estructura
+- Parseo y validación de `RoomEvent`.
+- Extracción de identificadores de videos de YouTube.
+- Generación de códigos de sala.
+- Servicio de salas: creación, ingreso y operaciones de modificación con autorización exclusiva del host.
+- Algoritmo de corrección de deriva de reproducción.
+- Aplicación de eventos realtime en el store.
+- Persistencia de sesiones.
+- Módulo de autenticación.
+- Limitador de frecuencia.
+- Tests de regresión de seguridad.
 
-```
+Los tests trabajan sobre lógica en memoria, por lo que no necesitan una instancia de Redis ni conexiones externas.
+
+Para las partes que requieren un servidor real, como Socket.IO, los headers HTTP, los límites de frecuencia y el margen de gracia, existe el script de verificación manual explicado anteriormente.
+
+También ejecuté `npm run build`. La compilación terminó correctamente, sin errores de TypeScript ni de Vite.
+
+## Estructura del proyecto
+
+Organicé el código separando la lógica del servidor, los componentes de Vue, los servicios y las utilidades.
+
+```text
 server/
 ├── lib/
-│   ├── auth.ts               # token secreto + userId público (sha256), comparación en tiempo constante
-│   ├── rateLimit.ts          # limitador de ventana deslizante (chat, por socket)
-│   ├── roomCode.ts          # generación + formato del código de sala
-│   ├── roomStore.ts          # interfaz RoomStore + factory (Upstash o memoria)
-│   ├── upstashRoomStore.ts   # implementación real sobre Redis
-│   ├── memoryRoomStore.ts    # implementación en memoria (dev sin Redis / tests)
-│   ├── roomService.ts        # lógica de negocio: sala, cola, reproducción, autorización de host
-│   └── http.ts               # helpers de respuesta HTTP compartidos
+│   ├── auth.ts               # Autenticación
+│   ├── rateLimit.ts          # Limitador de frecuencia por socket
+│   ├── roomCode.ts           # Generación y formato de códigos de sala
+│   ├── roomStore.ts          # Interfaz RoomStore y factory
+│   ├── upstashRoomStore.ts   # Persistencia mediante Redis / Upstash
+│   ├── memoryRoomStore.ts    # Almacenamiento en memoria
+│   ├── roomService.ts        # Lógica de salas, cola y autorización
+│   └── http.ts               # Helpers compartidos para respuestas HTTP
 ├── routes/
-│   └── rooms.ts              # todos los endpoints REST de /api/rooms/*
-├── socket.ts                 # conexión, presencia, chat, y reasignación de host
-└── index.ts                  # entrypoint: Express + Socket.io + helmet + límites + (en prod) estáticos del frontend
+│   └── rooms.ts              # Endpoints REST de /api/rooms/*
+├── socket.ts                 # Conexiones, presencia, chat y reasignación
+└── index.ts                  # Express, Socket.IO, seguridad y archivos estáticos
+
 src/
-├── components/    # TrackItem, Queue, AddTrackForm, MusicPlayer + sus piezas, ChatPanel, RoomHeader, ConfirmDialog, ToastHost…
-├── views/         # HomeView, RoomView — componen todo lo anterior
-├── layouts/       # DefaultLayout
-├── composables/   # usePlayer, useSynchronization, usePlayerPreferences, useRealtime (Socket.io), useToast
-├── stores/        # room.ts (Pinia) — sala, cola, reproducción, quién soy, si soy el host
-├── services/      # roomApi.ts (cliente de /api/rooms/*), youtubeMetadata.ts (título vía oEmbed), roomSession.ts (sesión en sessionStorage, Fase 8)
-├── types/         # Track, RoomState, RoomEvent, RoomCommand, API — con guardas en runtime
-├── utils/         # validation.ts, syncAlgorithm.ts (algoritmo de sincronización, puro y testeado)
-├── router/
+├── components/               # Componentes de interfaz
+├── views/                    # HomeView y RoomView
+├── layouts/                  # DefaultLayout
+├── composables/              # Lógica reutilizable de Vue
+├── stores/                   # Estado global con Pinia
+├── services/                 # API, YouTube y sesiones
+├── types/                    # Tipos y contratos con validación runtime
+├── utils/                    # Validaciones y algoritmo de sincronización
+├── router/                   # Configuración de rutas
 └── App.vue
-deploy/            # systemd, Caddyfile, scripts de firewall y de redeploy (ver DEPLOY.md)
-legacy/            # app original, intacta, como referencia y red de seguridad
+
+deploy/                       # Configuración y documentación de despliegue
+legacy/                       # Aplicación original preservada
 scripts/
-├── setup.mjs                 # instala todo (frontend + server + legacy) y prepara el .env
-└── manual-socket-test.mjs    # verificación manual de extremo a extremo del realtime
+├── setup.mjs                 # Instalación y configuración inicial
+└── manual-socket-test.mjs    # Verificación realtime de extremo a extremo
 ```
 
-Cada carpeta bajo `src/` sin archivos propios todavía tiene un `README.md`
-con el detalle de qué va ahí y en qué fase se completa.
+Dentro de `src/components/` tengo componentes como `TrackItem`, `Queue`, `AddTrackForm`, `MusicPlayer`, `ChatPanel`, `RoomHeader`, `ConfirmDialog` y `ToastHost`.
+
+Los composables contienen funcionalidades reutilizables como `usePlayer`, `useSynchronization`, `usePlayerPreferences`, `useRealtime` y `useToast`.
+
+El store `room.ts` de Pinia centraliza el estado de la sala, la cola, la reproducción, la identidad del usuario y su rol de host.
 
 ## Variables de entorno
 
-Ver [`.env.example`](./.env.example) para el detalle completo. Resumen:
+Las variables disponibles están documentadas en [`.env.example`](./.env.example).
 
-| Variable | Dónde se usa | Hace falta desde |
+| Variable | Uso | Configuración |
 |---|---|---|
-| `NODE_ENV` | `server/config.ts` | `production` solo en la nube (lo fija systemd, no el `.env`) |
-| `PORT` | `server/index.ts` | Opcional, default 3000 |
-| `HOST_REASSIGNMENT_GRACE_MS` | `server/socket.ts` | Opcional, default 5000 |
-| `CREATE_ROOM_LIMIT` | `server/index.ts` | Opcional, default 10 salas cada 10 min por IP |
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | `server/lib/upstashRoomStore.ts` | Fase 3 (opcional: sin esto, cae a memoria) |
+| `NODE_ENV` | `server/config.ts` | `production` en el servidor. |
+| `PORT` | `server/index.ts` | Opcional. Default: 3000. |
+| `HOST_REASSIGNMENT_GRACE_MS` | `server/socket.ts` | Opcional. Default: 5000 ms. |
+| `CREATE_ROOM_LIMIT` | `server/index.ts` | Opcional. Default: 10 salas cada 10 minutos por IP. |
+| `UPSTASH_REDIS_REST_URL` | `server/lib/upstashRoomStore.ts` | URL de Redis en Upstash. |
+| `UPSTASH_REDIS_REST_TOKEN` | `server/lib/upstashRoomStore.ts` | Token de acceso a Redis. |
 
-Ya no hay ninguna variable relacionada a Ably ni a Vercel. El `.env` se lee tanto en
-local como en la nube (`server/env.ts`); una variable definida en el shell gana sobre el archivo.
+Si no configuro las credenciales de Upstash, el servidor utiliza almacenamiento en memoria.
+
+El archivo `.env` se carga mediante el mecanismo de dotenv del proyecto. En el servicio systemd de Fedora, la aplicación carga sus propias variables al iniciar.
+
+**Nunca deben subirse al repositorio los valores reales de las variables de entorno, tokens, contraseñas, claves privadas ni archivos `.env`.**
 
 ## Seguridad
 
-Revisión contra el checklist del brief original (XSS, datos sin validar,
-autorización solo en el frontend, secretos, abuso de endpoints, códigos de
-sala, acceso no autorizado):
+Durante el desarrollo revisé la seguridad de la aplicación, prestando atención a XSS, validación de datos, autorización del lado del servidor, protección de credenciales y abuso de endpoints.
 
-### La falla que encontré (y era mía)
+### Autenticación y autorización
 
-En las Fases 3–4 el `userId` hacía de credencial: el servidor validaba que
-quien pedía un comando de host tuviera el mismo `userId` que `room.hostId`.
-Pero `hostId` viaja en el estado público de la sala, que recibe *cualquier*
-participante. Es decir: **cualquiera que conociera el código de una sala
-podía leer el `hostId` y actuar como host.** Lo reproduje contra el
-servidor real (HTTP 201 en vez de 403) antes de tocar nada.
+La autenticación separa la identidad pública de la credencial privada de cada participante. Las operaciones reservadas al host se validan en el backend; conocer el identificador público del host o el código de una sala no debe ser suficiente para obtener sus permisos.
 
-La validación server-side existía, pero comparaba contra algo público.
+Las credenciales de sesión se generan aleatoriamente, se conservan en el navegador y se envían al servidor mediante mecanismos de autenticación, no como parte de la URL. El servidor deriva la identidad asociada y comprueba los permisos antes de ejecutar operaciones protegidas.
 
-### El arreglo
+No se incluyen en este README tokens, valores de sesión, ejemplos de credenciales válidas ni detalles operativos que permitan acceder a una sala o hacerse pasar por un participante.
 
-Se separó identidad pública de credencial secreta (`server/lib/auth.ts`):
+### Medidas implementadas
 
-- Cada participante recibe un **token** aleatorio de 256 bits, que vive
-  solo en su navegador (`sessionStorage`) y viaja en `Authorization:
-  Bearer` — nunca en la URL ni en el body.
-- Su **`userId` público** es `sha256(token)`. Ver el `hostId` no permite
-  recuperar el token. El servidor no guarda tokens: los hashea al vuelo y
-  compara en tiempo constante.
-- En Socket.io el cliente manda su token en el `join`; el servidor deriva
-  la identidad. Nadie puede declararse otra persona en el handshake, y el
-  `userId` de cada mensaje de chat lo pone el servidor, no el cliente.
-
-### Resto de la revisión
-
-| Punto del brief | Estado |
+| Área | Medida |
 |---|---|
-| XSS | Sin `v-html`/`innerHTML` en `src/` (verificado con grep); todo el contenido de usuarios pasa por la interpolación de Vue, que escapa. `thumbnailUrl` la arma el servidor a partir de un ID validado, nunca viene del cliente. |
-| Datos sin validar | Tokens con formato estricto, IDs de video por regex, textos recortados, índices validados, body de máx. 10 KB, mensajes de Socket.io de máx. 10 KB. JSON malformado → 400. |
-| Abuso de endpoints | 120 pedidos/min por IP en toda la API y 10 salas cada 10 min por IP; chat limitado a 5 mensajes cada 5 s por socket. Verificado en vivo, incluso el conteo *por cliente* detrás de un proxy (`trust proxy`). |
-| Códigos de sala | 31⁶ ≈ 887 millones de combinaciones, y el tope por IP vuelve inviable probarlos al azar. |
-| Secretos | Ninguno en el bundle del cliente (no hay variables `VITE_*`); `.env` ignorado por git. |
-| Estabilidad | Un fallo de Redis dentro de un handler de socket ya no puede tumbar el proceso (una promesa rechazada sin capturar termina Node por default). |
-| Headers | `helmet`: `nosniff`, `X-Frame-Options`, `Referrer-Policy`, HSTS (180 días, sin subdominios). |
-| `npm audit` | 0 vulnerabilidades (se corrigió un aviso de `source-map-js`). |
+| XSS | No utilizo `v-html` ni `innerHTML` dentro de `src/`. Vue escapa automáticamente el contenido interpolado. |
+| Miniaturas | Las URL se construyen en el servidor a partir de identificadores validados. |
+| Validación | Se validan tokens, IDs de YouTube, textos e índices recibidos. |
+| Tamaño de peticiones | Body HTTP y mensajes Socket.IO limitados a 10 KB. |
+| API | Límite de 120 peticiones por minuto por IP. |
+| Creación de salas | Límite de 10 salas cada 10 minutos por IP. |
+| Chat | Máximo de 5 mensajes cada 5 segundos por socket. |
+| Secretos | Las credenciales no deben formar parte del bundle del cliente ni del repositorio. El `.env` debe permanecer excluido de Git. |
+| Headers HTTP | Se utiliza Helmet para configurar cabeceras de seguridad. |
+| Persistencia | Los errores de Redis se manejan para evitar que fallos de almacenamiento derriben el proceso por promesas rechazadas sin capturar. |
 
-### Lo que queda abierto, a propósito
+Los límites de frecuencia fueron verificados en ejecución.
 
-- **La CSP está en modo "solo reportar".** No bloquea nada: avisa en la
-  consola del navegador si algo de lo que carga la app (IFrame API de
-  YouTube, fuentes, miniaturas) violaría la política. No pude abrir un
-  navegador para ajustarla, y una CSP que bloquea mal rompe el reproductor
-  sin avisar. **Abrí la app, mirá la consola, y cuando no haya
-  violaciones pasá `reportOnly` a `false` en `server/index.ts`.**
-- **El código de sala es el "secreto" para entrar.** Cualquiera que lo
-  tenga puede unirse como oyente: así funciona compartir un enlace (el
-  brief lo pedía). Lo que ya no puede hacer es actuar como host.
-- **El token está en `sessionStorage`**, el mismo riesgo que cualquier
-  token de sesión en el navegador frente a un XSS — por eso importa que no
-  haya `v-html`.
-- **Si el host se desconecta de verdad, pierde el rol** (pasa al oyente
-  que quede) y no lo recupera al volver. Es el comportamiento del
-  `promoteMaster()` de la app original.
-- **`trust proxy` asume exactamente un proxy delante** (Caddy). Con Caddy,
-  el `X-Forwarded-For` entrante de los clientes se descarta y se pone la IP
-  real, así que no se puede falsear. No expongas el puerto 3000 directo a
-  internet — la guía de despliegue ya solo abre 80/443.
+### Aspectos pendientes
+
+**Content Security Policy (CSP)**
+
+La CSP está configurada en modo `reportOnly`. Esto significa que registra posibles violaciones, pero no bloquea los recursos. Antes de activar el bloqueo es necesario comprobar los recursos externos utilizados por la aplicación, especialmente YouTube IFrame API, fuentes y miniaturas.
+
+**Acceso a las salas**
+
+El código de sala permite que cualquier persona que lo conozca entre como oyente. Es un comportamiento intencional para facilitar el acceso compartido. Los permisos de host se validan por separado.
+
+**Almacenamiento de credenciales**
+
+Las credenciales de sesión se guardan en `sessionStorage`. Como cualquier dato sensible almacenado en el navegador, podrían quedar expuestas ante una vulnerabilidad XSS. Por eso se evita insertar HTML directamente y se mantienen las validaciones de entrada.
+
+**Reasignación del host**
+
+Si el host se desconecta realmente, pierde su rol y este pasa a otro participante que permanezca en la sala. Existe un margen de gracia para evitar que una actualización de página provoque una reasignación inmediata. Si el antiguo host vuelve a conectarse, no recupera automáticamente ese rol.
+
+**Infraestructura**
+
+En Fedora se mantienen activos `firewalld` y SELinux. No se desactivó SELinux para resolver problemas de ejecución. Cloudflare Tunnel permite publicar el servicio sin configurar redirección de puertos entrantes en el router, pero no reemplaza las medidas de seguridad de la aplicación ni del sistema operativo.
+
+## Historial de desarrollo
+
+1. Configuración inicial de Vue 3, TypeScript, Vite y Tailwind.
+2. Definición de tipos y contrato de eventos realtime.
+3. Implementación del sistema de salas, con creación y acceso mediante códigos.
+4. Migración de la interfaz a componentes: reproductor, cola y chat.
+5. Integración del reproductor de YouTube mediante YouTube IFrame API y corrección de su inicialización.
+6. Implementación de comunicación en tiempo real con Socket.IO, incluyendo chat y reproducción sincronizada.
+7. Reasignación automática del host cuando se desconecta.
+8. Persistencia de sesiones y margen de gracia para evitar reasignaciones durante un refresh.
+9. Implementación de persistencia mediante Redis / Upstash.
+10. Revisión de seguridad: autenticación, autorización, límites de frecuencia y headers HTTP.
+11. Compilación de producción y pruebas automatizadas.
+12. Despliegue del backend en Fedora mediante systemd.
+13. Publicación del servicio desde Internet mediante Cloudflare Quick Tunnel.
+
+### Próximas tareas
+
+- Configurar una VM Ubuntu Server 24.04 mediante KVM/QEMU.
+- Desplegar TavernSound dentro de esa VM.
+- Configurar y verificar SSH, firewall y Caddy en Ubuntu.
+- Evaluar una VPS externa si se puede acceder a un proveedor.
+- Probar la sincronización entre dispositivos en redes diferentes.
+- Medir latencia y disponibilidad.
+- Definir una estrategia de backups.
+- Evaluar una URL pública estable para el servicio.
+
+## Documentación de despliegue anterior
+
+Durante el desarrollo también se preparó una arquitectura para OCI Always Free con Ubuntu Server 24.04, systemd y Caddy como reverse proxy con HTTPS automático.
+
+Los archivos relacionados pueden encontrarse en [`deploy/`](./deploy), [`DEPLOY.md`](./DEPLOY.md) y [`LOCAL-VS-NUBE.md`](./LOCAL-VS-NUBE.md), si siguen presentes en el repositorio.
+
+Esa configuración representa un procedimiento planificado y no el despliegue que está funcionando actualmente. La infraestructura activa es Fedora con Cloudflare Tunnel.
 
 ## Identidad visual
 
-La paleta (dorado sobre fondo oscuro, tipografías Cinzel/Crimson Text) es
-la misma que la app original — se portó a tokens de Tailwind en
-[`src/assets/main.css`](./src/assets/main.css) en vez de reinventarse.
+Quise mantener la identidad visual de la aplicación original en lugar de rediseñarla desde cero.
+
+Conservé la paleta de dorados sobre fondos oscuros y las tipografías Cinzel y Crimson Text, trasladando los estilos a tokens de Tailwind CSS.
+
+La implementación se encuentra en [`src/assets/main.css`](./src/assets/main.css).
